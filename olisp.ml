@@ -122,9 +122,22 @@ let num_str (n : num scheme_obj) = match n with
     | Number (L s) -> Int64.to_string s
     | Number (R s) -> Float.to_string s
 
-let to_string (obj: exp scheme_obj) : string = match obj with
+let rec to_string (obj: exp scheme_obj) : string = (match obj with
     | Exp (L (Atom (L (Symbol s))))-> s
     | Exp (L (Atom (R (Number n))))-> num_str (Number n)
+    | Exp (R (List l))-> match l with 
+        | [] -> "()"
+        | (Ele (Atom (L (Symbol s))))::xs -> (match (to_string'(Exp (R (List xs)))) with "" -> "("^s^")" | str -> "("^s^" "^str^")")
+        | (Ele (Atom (R (Number n))))::xs ->  (match (to_string'(Exp (R (List xs)))) with "" -> "("^(num_str (Number n))^")" | str -> "("^(num_str (Number n))^" "^str^")")
+        | (Li (ll))::xs -> "(("^(to_string'(Exp (R (List ll))))^") "^(to_string(Exp (R (List xs))))^")")
+and to_string' (obj: exp scheme_obj) : string = match obj with
+    | Exp (L (Atom (L (Symbol s))))-> s
+    | Exp (L (Atom (R (Number n))))-> num_str (Number n)
+    | Exp (R (List l))-> match l with 
+        | [] -> ""
+        | (Ele (Atom (L (Symbol s))))::xs -> (match to_string'(Exp (R (List xs))) with "" -> s | str -> s^" "^str)
+        | (Ele (Atom (R (Number n))))::xs -> (match to_string'(Exp (R (List xs))) with "" -> (num_str (Number n)) | str -> (num_str (Number n))^" "^str)
+        | (Li (ll))::xs -> (match to_string'(Exp (R (List xs))) with "" -> (to_string(Exp (R (List ll)))) | str -> (to_string(Exp (R (List ll))))^" "^str)
 
 let rec find (h: lookup) (key: symb scheme_obj) = match h with
     | Innermost hs -> Hashtbl.find hs key
@@ -158,6 +171,7 @@ let eval_user_proc (p) args =
         | UserDefProc (params, body, Env env) -> eval body (ref (Env (create_user_env(params, to_store_list args, env))))
         | _ -> failwith "incorrect usage of eval_user_proc"
 
+
 let environ = basic_environment ()
 let Env (env) = environ
 
@@ -170,7 +184,7 @@ let c = (List [ Li [ Li [Ele( Atom(L(Symbol "+")))]; Ele( Atom(L(Symbol "+"))) ]
 let d = (List [ Li [ Li [Ele( Atom(L(Symbol "+")))]; Ele( Atom(L(Symbol "+"))) ] ])
 
 let program = "(define (merge L M) (if (null? L) M (if (null? M) L (if (< (car L) (car M)) (cons (car L) (merge (cdr L) M)) (cons (car M) (merge (cdr M) L))))))"
-let program = "(1 2)"
+let program = "(1 2 3)"
 
 let a = tokenize(program)
 
@@ -178,7 +192,6 @@ let res = _parse(program)
 let res2 = parse(program) 
 
 
-(*
 
 let read_eval_print_loop () : unit =
   let cond = ref true in 
@@ -191,7 +204,7 @@ let read_eval_print_loop () : unit =
             match input with
                 | "quit" -> (Printf.printf "Quitting.\n"; cond := false)
                 | "" -> ()
-                | _ -> Printf.printf "%s\n" (to_string (eval (parse input) environ))
+                | _ -> Printf.printf "=> %s\n" (to_string (eval (parse input) environ))
             with Failure "incorrect usage of function" -> Printf.printf "Unsupported/Not a well-formatted Lisp expression.\n"
         end
     )
@@ -199,4 +212,3 @@ let read_eval_print_loop () : unit =
       
 
 let () = read_eval_print_loop ()
-*)
