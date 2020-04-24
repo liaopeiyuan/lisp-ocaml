@@ -18,10 +18,14 @@ type 'a scheme_obj =
     | Atom : (symb scheme_obj, num scheme_obj) e -> atom scheme_obj
     | List : atom scheme_obj ele list -> l scheme_obj
     | Exp : (atom scheme_obj, l scheme_obj) e -> exp scheme_obj
-    | Env : (symb scheme_obj, store) Hashtbl.t -> env scheme_obj
+    | Env : lookup -> env scheme_obj
 and store = 
     | Proc of (l scheme_obj -> exp scheme_obj) 
     | Ref of num scheme_obj
+    | UserDefProc of (l scheme_obj * l scheme_obj * env scheme_obj)
+and lookup =
+    | Innermost of (symb scheme_obj, store) Hashtbl.t
+    | Outer of ((symb scheme_obj, store) Hashtbl.t * lookup)
 
 let rec tokenize(chars: string) : string list = 
     let split = Str.split (Str.regexp "[ \t]+") in
@@ -59,26 +63,31 @@ let rec read_from_tokens (tokens: string list ref) : 'a ele =
    | ")"::_ -> failwith "unexpected )" 
    | x::xs->  let () = tokens := xs in Ele (atom(x))
 
-let break(e : 'a ele) : 'a ele list = match e with
+exception Break of atom scheme_obj
+let break(e : atom scheme_obj ele) : atom scheme_obj ele list = match e with
     | Li a -> a
-    | Ele _ -> failwith "incorrect usage of function"
+    | Ele b -> raise (Break b) 
 
-let parse(program:string) : exp scheme_obj =
+let parse (program:string) : exp scheme_obj =
     let input = program |> tokenize |> ref in
+    begin try
     let result = input |> read_from_tokens |> break in
-    match result with 
-       | [] -> Exp (R (List []))
-       | (Ele x)::[] -> Exp(L (x))
-       | _ -> Exp(R (List (result)) )
+        Exp(R (List (result)) )
+        with Break b -> Exp (L b)
+    end
+        
 
-let _parse(program:string) : 'a ele list =
+let _parse(program:string) : atom scheme_obj ele list =
     let input = program |> tokenize |> ref in
+    begin try
     let result = input |> read_from_tokens |> break in
-    result
+     result
+     with Break b -> [Ele b]
+    end
 
 let literal x = Exp (L (Atom (R (Number (L x))))) 
 let float_literal x = Exp (L (Atom (R (Number (R x))))) 
-let to_hs (s) : (symb scheme_obj, store) Hashtbl.t = match s with (Env hs) -> hs 
+let to_hs (s) : (symb scheme_obj, store) Hashtbl.t = match s with (Env (Innermost hs)) -> hs 
 
 let basic_environment (_: unit) : env scheme_obj =
     let hs: (symb scheme_obj, store) Hashtbl.t = Hashtbl.create 42 in
@@ -97,9 +106,8 @@ let basic_environment (_: unit) : env scheme_obj =
     let pi = Ref (Number (R Float.pi)) in
     let quote = Proc (fun x -> match x with 
                                 | List [] -> failwith "Invalid quote: (quote) []" 
-                                | List (y::_) -> match y with 
-                                                | Ele e -> Exp (L e) 
-                                                | Li es -> Exp (R (List es)) ) 
+                                | List ((Ele e)::_) ->Exp (L e) 
+                                | List ((Li es)::_)  -> Exp (R (List es)) ) 
     in
     let listify = Proc (fun x -> Exp (R x)) in
     (   
@@ -107,15 +115,27 @@ let basic_environment (_: unit) : env scheme_obj =
         Hashtbl.add hs (Symbol "pi") pi;
         Hashtbl.add hs (Symbol "quote") quote;
         Hashtbl.add hs (Symbol "list") listify;
-        Env hs
+        Env (Innermost hs)
     )
 
-(* To Be Implemented *)
-let eval (e: exp scheme_obj) (env: env scheme_obj) = failwith "NotImplemented"
+let num_str (n : num scheme_obj) = match n with
+    | Number (L s) -> Int64.to_string s
+    | Number (R s) -> Float.to_string s
 
-let environ = basic_environment()
-let Env env = environ
+let to_string (obj: exp scheme_obj) : string = match obj with
+    | Exp (L (Atom (L (Symbol s))))-> s
+    | Exp (L (Atom (R (Number n))))-> num_str (Number n)
+
+
+(* To Be Implemented *)
+let eval (e: exp scheme_obj) (env: env scheme_obj ref) = e
+
+let environ = basic_environment ()
+let Env (Innermost env) = environ
+
+
 let Proc f = Hashtbl.find env (Symbol "+")
+
 let g x = (Ele (Atom (R (Number (L x)))) )
 let g2 x = (Ele (Atom (R (Number (R x)))) )
 
@@ -123,9 +143,33 @@ let c = (List [ Li [ Li [Ele( Atom(L(Symbol "+")))]; Ele( Atom(L(Symbol "+"))) ]
 let d = (List [ Li [ Li [Ele( Atom(L(Symbol "+")))]; Ele( Atom(L(Symbol "+"))) ] ])
 
 let program = "(define (merge L M) (if (null? L) M (if (null? M) L (if (< (car L) (car M)) (cons (car L) (merge (cdr L) M)) (cons (car M) (merge (cdr M) L))))))"
-let program = "(pi)"
+let program = "(1 2)"
 
 let a = tokenize(program)
 
 let res = _parse(program) 
 let res2 = parse(program) 
+
+
+(*
+
+let read_eval_print_loop () : unit =
+  let cond = ref true in 
+  let environ = () |> basic_environment |> ref in 
+  while !cond do 
+    (
+        Printf.printf "> ";
+        let input = read_line () in 
+        begin try 
+            match input with
+                | "quit" -> (Printf.printf "Quitting.\n"; cond := false)
+                | "" -> ()
+                | _ -> Printf.printf "%s\n" (to_string (eval (parse input) environ))
+            with Failure "incorrect usage of function" -> Printf.printf "Unsupported/Not a well-formatted Lisp expression.\n"
+        end
+    )
+  done
+      
+
+let () = read_eval_print_loop ()
+*)
