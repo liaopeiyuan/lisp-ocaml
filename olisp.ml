@@ -22,7 +22,8 @@ type 'a scheme_obj =
 and store = 
     | Proc of (l scheme_obj -> exp scheme_obj) 
     | Ref of num scheme_obj
-    | UserDefProc of (l scheme_obj * l scheme_obj * env scheme_obj)
+                      (* parms, body, env *)
+    | UserDefProc of (symb scheme_obj list * exp scheme_obj * env scheme_obj)
 and lookup =
     | Innermost of (symb scheme_obj, store) Hashtbl.t
     | Outer of ((symb scheme_obj, store) Hashtbl.t * lookup)
@@ -87,7 +88,6 @@ let _parse(program:string) : atom scheme_obj ele list =
 
 let literal x = Exp (L (Atom (R (Number (L x))))) 
 let float_literal x = Exp (L (Atom (R (Number (R x))))) 
-let to_hs (s) : (symb scheme_obj, store) Hashtbl.t = match s with (Env (Innermost hs)) -> hs 
 
 let basic_environment (_: unit) : env scheme_obj =
     let hs: (symb scheme_obj, store) Hashtbl.t = Hashtbl.create 42 in
@@ -126,15 +126,42 @@ let to_string (obj: exp scheme_obj) : string = match obj with
     | Exp (L (Atom (L (Symbol s))))-> s
     | Exp (L (Atom (R (Number n))))-> num_str (Number n)
 
+let rec find (h: lookup) (key: symb scheme_obj) = match h with
+    | Innermost hs -> Hashtbl.find hs key
+    | Outer (hs, inner) -> try (find inner key) with Not_found -> Hashtbl.find hs key
 
 (* To Be Implemented *)
 let eval (e: exp scheme_obj) (env: env scheme_obj ref) = e
 
+let create_user_env (params,args,env) =
+    let rec zip params args hs = match ( params,  args) with 
+        | ([], []) -> hs
+        | (x::xs, y::ys) -> (Hashtbl.add hs x y; zip xs ys hs)
+        | _ -> failwith "inproper user defined procedure"
+    in
+    let hs = Hashtbl.create 42 in
+    let dict = zip params args hs in
+    let rec update_env (env, inner) = match env with
+       | Innermost hs -> Outer (hs, inner)
+       | Outer (hs, outin) -> Outer (hs, update_env(outin, inner))
+    in
+
+    update_env (env, Innermost(dict))
+
+let eval_user_proc (p) args =
+    let rec to_store_list args = (match args with 
+        | List [] -> []
+        | List ( (Ele (Atom (R x)))::xs) -> (Ref x) :: (to_store_list (List xs))
+        | _ -> failwith "incorrect usage of eval_user_proc")
+    in
+    match p with
+        | UserDefProc (params, body, Env env) -> eval body (ref (Env (create_user_env(params, to_store_list args, env))))
+        | _ -> failwith "incorrect usage of eval_user_proc"
+
 let environ = basic_environment ()
-let Env (Innermost env) = environ
+let Env (env) = environ
 
-
-let Proc f = Hashtbl.find env (Symbol "+")
+let Proc f = find env (Symbol "+")
 
 let g x = (Ele (Atom (R (Number (L x)))) )
 let g2 x = (Ele (Atom (R (Number (R x)))) )
