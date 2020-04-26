@@ -79,6 +79,7 @@ let condition (x: exp scheme_obj) (e1: atom scheme_obj ast) (e2: atom scheme_obj
             | Leaf (e') -> Exp (L (e'))
             | Node (e') -> Exp (R (List (e')))
 
+(* lambda command *)
 let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env : env scheme_obj) : exp scheme_obj =
     let elem_ns_apply a = match a with
         | Leaf (Atom (L (p))) -> p
@@ -93,6 +94,12 @@ let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env
         | [] -> failwith "Invalid lambda."
         | (Node l)::_ -> Exp(L (Atom (L(Func (params_to_ns params, Exp (R (List (l))), env)  ))))
         | (Leaf a)::_ ->  Exp(L (Atom (L(Func (params_to_ns params, Exp(L (a)), env)  )))) 
+
+let define (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
+    (match params with
+        | Atom (L (Symbol s)) -> set env (Symbol s) body
+        | _ -> failwith "only symbols can be bond in the environment";
+    Epsilon)
 
 (* tokenize a Lisp expression (in string) to tokens *)
 let rec tokenize (chars: string) : string list = 
@@ -185,13 +192,17 @@ let basic_environment (_: unit) : env scheme_obj =
         Env (Innermost hs)
     )
 
-(* finding a binding in an environment: starting with the inner-most scope,
+(* finding and setting a binding in an environment: starting with the inner-most scope,
    then recursively moves up if not found. If binding does not exist in all
    scopes, raises Not_found exception.
  *)
 let rec find (h: env scheme_obj) (key: data scheme_obj) = match h with
     | Env (Innermost hs) -> Hashtbl.find hs key
     | Env (Outer (hs, inner)) -> try (find (Env inner) key) with Not_found -> Hashtbl.find hs key
+
+let rec set (h: env scheme_obj) (key: data scheme_obj) (value: store) = match h with
+    | Env (Innermost hs) -> Hashtbl.add hs key value
+    | Env (Outer (hs, inner)) -> set inner key value
 
 (* To Be Implemented: Eval *)
 let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj = 
