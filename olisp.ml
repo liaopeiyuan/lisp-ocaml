@@ -49,6 +49,18 @@ and store =  (* Environment-defined procedures, variables, and user-defined proc
     | Ref of num scheme_obj (* Variable-value bindings *) 
     | UProc of func scheme_obj (* User-defined procedures *)               
 
+(* finding and setting a binding in an environment: starting with the inner-most scope,
+   then recursively moves up if not found. If binding does not exist in all
+   scopes, raises Not_found exception.
+ *)
+let rec find (h: env scheme_obj) (key: data scheme_obj) = match h with
+    | Env (Innermost hs) -> Hashtbl.find hs key
+    | Env (Outer (hs, inner)) -> try (find (Env inner) key) with Not_found -> Hashtbl.find hs key
+
+let rec set (h: env scheme_obj) (key: data scheme_obj) (value: store) : unit = match h with
+    | Env (Innermost hs) -> Hashtbl.add hs key value
+    | Env (Outer (hs, inner)) -> set (Env inner) key value
+
 (* built-in commands and function to check for them *)
 type builtin = Quote | If | Define | Set | Lambda | NotABuiltin
 
@@ -96,10 +108,9 @@ let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env
         | (Leaf a)::_ ->  Exp(L (Atom (L(Func (params_to_ns params, Exp(L (a)), env)  )))) 
 
 let define (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
-    (match params with
-        | Atom (L (Symbol s)) -> set env (Symbol s) body
-        | _ -> failwith "only symbols can be bond in the environment";
-    Epsilon)
+    match params with
+        | Leaf (Atom (L (Symbol s))) -> (set env (Symbol s) body; Epsilon)
+        | _ -> failwith "only symbols can be bond in the environment"
 
 (* tokenize a Lisp expression (in string) to tokens *)
 let rec tokenize (chars: string) : string list = 
@@ -192,21 +203,9 @@ let basic_environment (_: unit) : env scheme_obj =
         Env (Innermost hs)
     )
 
-(* finding and setting a binding in an environment: starting with the inner-most scope,
-   then recursively moves up if not found. If binding does not exist in all
-   scopes, raises Not_found exception.
- *)
-let rec find (h: env scheme_obj) (key: data scheme_obj) = match h with
-    | Env (Innermost hs) -> Hashtbl.find hs key
-    | Env (Outer (hs, inner)) -> try (find (Env inner) key) with Not_found -> Hashtbl.find hs key
-
-let rec set (h: env scheme_obj) (key: data scheme_obj) (value: store) = match h with
-    | Env (Innermost hs) -> Hashtbl.add hs key value
-    | Env (Outer (hs, inner)) -> set inner key value
-
 (* To Be Implemented: Eval *)
 let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj = 
-    e
+   e
 (* helper function that prunes a children in AST into an "irreducible" expression,
    given that eval is implemented correctly
  *)
@@ -251,17 +250,9 @@ and eval_user_proc (p: func scheme_obj) (args: atom scheme_obj ast list) (env: e
         
 let environ = ref (basic_environment ())
 
-let program = "((lambda (x y z) (+ x y z)) ((lambda (x) x) 1) 2 (+ 3 4))"
-
-let b = parse "((lambda (x) x) 1) 2 (+ 3 4))"
-let a = parse "(lambda (x y z) (+ x y z))"
-let program = "((lambda (f x) f x) 1)"
+let program = "((lambda (f x) (f x)) (lambda (x) (+ x 2)) ((lambda (x) x) 1))"
 
 let res = parse(program) 
-
-(*
-let helper program = match parse(program) with Exp(R(List (x::xs))) -> (x,xs)
-*)
 
 (* turn a num scheme_obj into a string *)
 let num_str (n : num scheme_obj) : string = match n with
