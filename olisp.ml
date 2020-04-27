@@ -1,4 +1,4 @@
-(* Lisp interpreter via GADT and Subtyping *)
+(* Lisp interpreter via GADT *)
 (* Inspiration: https://norvig.com/lispy.html *)
 (* Author: Peiyuan Liao (alexander_liao@outlook.com) *)
 
@@ -11,8 +11,8 @@ type ('f, 's) e = | L of 'f | R of 's
 
 type num
 type l
-type atom = [ `Atom ]
-type exp = [ atom | `Exp ] (* An atomic expression can also be an expression *)
+type atom
+type exp
 type env
 type func = [ `Namespace ]
 type data = [ `Namespace ] (* by Lisp-1 standard, functions and
@@ -22,7 +22,14 @@ type namespace = [ `Namespace ]
 (* ragged higher-dimensional array for AST *)
 type 'a ast = Leaf of 'a | Node of 'a ast list
 
-(* Scheme objects *)
+(* Scheme objects are united using a single GADT (Generalized Algebraic Data Type)
+    basically, we can impose additional constraints on functions we write: 
+    instead of wrriting a function like scheme_obj -> scheme_obj and allowing programmer
+    to pass in say an env scheme_obj to a function that needs exp scheme_obj (and requiring
+    such functions to write additional failure cases to theses obivously wrong cases), 
+    in GADT's you can control the resulting type of applying tags, so you can write nicer
+    total functions.
+ *)
 type 'a scheme_obj =
     | Symbol : string -> data scheme_obj (* Symbols: all non-literal entities 
                                             are stored this way before eval *)
@@ -43,7 +50,6 @@ type 'a scheme_obj =
 and lookup = (* Scoping *)
     | Innermost of (namespace scheme_obj, store) Hashtbl.t (* Inner-most scope *)
     | Outer of ((namespace scheme_obj, store) Hashtbl.t * lookup)
-    (* to deal with anonymous functions, "it" is reserved for anonymous functions *)
 and store =  (* Environment-defined procedures, variables, and user-defined procedures *)
     | Proc of (l scheme_obj -> exp scheme_obj) (* Pre-defined procedures (like +) in envs *)
     | Ref of num scheme_obj (* Variable-value bindings *) 
@@ -103,8 +109,11 @@ let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env
         | _ -> failwith "formal parameters can only be namespace entities"
     in
     match (List.rev body) with
+        (*(lambda x) is not valid*)
         | [] -> failwith "Invalid lambda."
+        (*(lambda (expr) x)*)
         | (Node l)::_ -> Exp(L (Atom (L(Func (params_to_ns params, Exp (R (List (l))), env)  ))))
+         (*(lambda (expr) (expr))*)
         | (Leaf a)::_ ->  Exp(L (Atom (L(Func (params_to_ns params, Exp(L (a)), env)  )))) 
 
 let define (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
@@ -147,11 +156,14 @@ let rec read_from_tokens (tokens: string list ref) : 'a ast =
         | [] -> failwith "unexptected EOF"
         | "("::xs -> 
                 let result = ref [] in
+                (* first element *)
                 let () = tokens := xs in
                 (
                     while (List.hd(!tokens) <> ")") do
+                        (* while not empty, cons it to result *)
                         result := ((read_from_tokens(tokens)))::(!result)
                     done; 
+                    (* popping off *)
                     tokens := List.tl (!tokens); 
                     Node (!result |> List.rev) 
                 )
@@ -195,6 +207,10 @@ let basic_environment (_: unit) : env scheme_obj =
         | _ -> failwith "incorrect usage of add"
     in
     let pi = Ref (Number (R Float.pi)) in
+
+    (* We can see that (1 2 3) will fail the interpreter, while (list 1 2 3) will generate
+       (1 2 3) because of the function below: they have the same internal representation
+     *)
     let listify = Proc (fun x -> Exp (R x)) in
     (   
         Hashtbl.add hs (Symbol "+") (Proc add);
@@ -205,22 +221,17 @@ let basic_environment (_: unit) : env scheme_obj =
 
 (* To Be Implemented: Eval *)
 let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj = 
-   e
+    e
 (* helper function that prunes a children in AST into an "irreducible" expression,
    given that eval is implemented correctly
  *)
 and prune (env: env scheme_obj ref) (x : atom scheme_obj ast) : atom scheme_obj ast =   
-    let rec subtl (x': atom scheme_obj ast list) :> atom scheme_obj ast = 
-            match (eval (Exp (R (List x'))) env) with  
-                | Exp (L x) -> Leaf x 
-                | Exp (R (List x)) -> (Node x) 
-                | _ -> failwith "sub-expressions not correctly evaluated" in
-    let rec subte (x': atom scheme_obj) :> atom scheme_obj ast = 
-            match (eval (Exp (L x')) env) with 
+    let rec subst (x': exp scheme_obj) : atom scheme_obj ast = 
+            match (eval (x') env) with 
                 | Exp (L x) -> Leaf x 
                 | Exp (R (List x)) -> (Node x) 
                 | _ -> failwith "sub-expressions not correctly evaluated" in 
-    (match x with | Leaf x' -> (subte x') | Node x' -> (subtl x')) 
+    (match x with | Leaf x' -> (subst (Exp (L x'))) | Node x' -> (subst (Exp (R (List x'))))) 
 (* create a user-defined scope *)
 and create_user_env ( (params, args, env) : data scheme_obj list * store list * lookup) : lookup =
     let rec zip params args hs = match ( params,  args) with 
@@ -241,6 +252,9 @@ and eval_user_proc (p: func scheme_obj) (args: atom scheme_obj ast list) (env: e
         |  [] -> []
         |  ( (Leaf (Atom (R x)))::xs) -> (Ref x) :: (to_store_list (xs))
         |  ( (Leaf (Atom (L (Func f))))::xs) -> (UProc (Func f)) :: (to_store_list (xs))
+        (* Move references in the previous environment into the current one if lambda uses a symbol in previous environment 
+          this is because we don't allow references that point to another reference in the GADT definition
+         *)
         |  ( (Leaf (Atom (L (Symbol s))))::xs) ->  begin try (find env (Symbol s)) :: (to_store_list (xs)) with Not_found -> failwith ("Unbound symbol: "^s) end
         | _ -> failwith "incorrect usage of eval_user_proc")
     in
@@ -269,6 +283,9 @@ let rec to_string (obj: exp scheme_obj) : string =
     | Exp (L (Atom (L (Func _))))-> "#<Closure>"
     | Exp (L (Atom (R (n))))-> num_str (n)
     | Exp (R (List l))-> match l with 
+        (* Start with a parenthesis, then string-ify the rest of the list without parenthesis (to_string'), then adds the back
+           parenthesis in the end
+         *)
         | [] -> "()"
         | (Leaf (Atom (L (Symbol s))))::xs -> (match (to_string'(xs)) with "" -> "("^s^")" | str -> "("^s^" "^str^")")
         | (Leaf (Atom (L (Func _))))::xs -> (match (to_string'(xs)) with "" -> "(#<Closure>)" | str -> "(#<Closure> "^str^")")
