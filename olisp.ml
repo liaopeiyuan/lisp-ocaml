@@ -221,7 +221,38 @@ let basic_environment (_: unit) : env scheme_obj =
 
 (* To Be Implemented: Eval *)
 let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj = 
-    e
+    let environ = !env in
+    let ast_apply = prune env in
+    (match e with
+    | (Exp(R (List []))) -> (Exp(R (List []))) 
+    | (Exp(L (Atom (R (Number x))))) -> (Exp(L (Atom (R (Number x)))))
+    | (Exp(L (Atom (L (Symbol "#f"))))) -> (Exp(L (Atom (R (F)))))
+    | (Exp(L (Atom (L (Symbol "#t"))))) -> (Exp(L (Atom (R (T)))))
+    | (Exp(L (Atom (L (Symbol s))))) -> 
+        (match (check_builtin (Symbol s)) with
+            | NotABuiltin ->   begin try (match find environ (Symbol s) with
+                                | Ref r -> Exp(L (Atom (R r)))
+                                | Proc f -> e
+                                | UProc (Func (params, body, Env env) as p) -> Exp(L (Atom (L p)))) with Not_found -> failwith ("Unbound symbol: "^s) end
+            | _ -> e
+        )
+    | (Exp(R (List (op::args)))) ->
+            let op_eval = ast_apply op  in
+            (match op_eval with 
+                | Leaf (Atom (R _)) -> failwith "Error: a literal is not a function"
+                | Leaf (Atom (L (Symbol s))) -> 
+                    (match (check_builtin (Symbol s)) with
+                        | NotABuiltin ->  begin try (match find environ (Symbol s) with
+                                   | Ref r -> failwith "Error: a literal is not a function"
+                                   | Proc f -> let args_eval = List.map ast_apply args in f (List (args_eval)) ) with Not_found -> failwith ("Unbound symbol: "^s) end
+                        | Quote -> quote args
+                        | If -> let acc = List.nth args in 
+                                    eval (condition (eval (atom_ele_to_exp (acc 0)) env) (acc 1) (acc 2)) env
+                        | Lambda -> lambda (args |> List.hd) (args |> List.tl) environ
+                    )
+                | Leaf (Atom (L (Func (params, body, Env env) as p))) -> eval_user_proc p (List.map ast_apply args) environ
+            )
+    | _ -> failwith "NotImplemented in eval")
 (* helper function that prunes a children in AST into an "irreducible" expression,
    given that eval is implemented correctly
  *)
