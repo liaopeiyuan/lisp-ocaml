@@ -68,7 +68,7 @@ let rec set (h: env scheme_obj) (key: data scheme_obj) (value: store) : unit = m
     | Env (Outer (hs, inner)) -> set (Env inner) key value
 
 (* built-in commands and function to check for them *)
-type builtin = Quote | If | Define | Set | Lambda | NotABuiltin
+type builtin = Quote | If | Define | Set | Lambda | Begin | NotABuiltin
 
 let check_builtin a = match a with
     | (Symbol "quote") -> Quote
@@ -76,6 +76,7 @@ let check_builtin a = match a with
     | (Symbol "define") -> Define
     | (Symbol "set!") -> Set
     | (Symbol "lambda") -> Lambda
+    | (Symbol "begin") -> Begin
     | _ -> NotABuiltin
 
 (* helper function to convert a child in AST to an expression *)
@@ -225,6 +226,29 @@ let basic_environment (_: unit) : env scheme_obj =
             | _ -> failwith "incorrect usage of mult")
         | _ -> failwith "incorrect usage of mult"
     in
+    let rec minus l = match l with
+        | List [] -> literal 0L
+        | List (  (Leaf (Atom (R (Number (L a)))) )::(Leaf (Atom (R (Number (L b)))) )::xs  ) -> 
+            literal (Int64.sub a b)
+        (*| List (  (Leaf (Atom (R (Number (L a)))) )::xs  ) -> (match minus(List xs) with
+                | Exp (L (Atom (R (Number (L sum))))) ->  literal (Int64.sub sum a)
+                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (Int64.to_float(a) -. sum)
+                | _ -> failwith "incorrect usage of minus")
+        | List (  (Leaf (Atom (R (Number (R a)))) )::xs  ) -> (match minus(List xs) with
+                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (sum -. a)
+                | Exp (L (Atom (R (Number (L sum))))) ->  float_literal ( Int64.to_float(sum) -. a)
+            | _ -> failwith "incorrect usage of minus")
+        *)
+        | _ -> failwith "incorrect usage of minus"
+    in
+    let leq l = match l with
+        | List [] -> failwith "Too few arguments: exptected 2, got 0"
+        | List (_::[]) -> failwith "Too few arguments: exptected 2, got 1"
+        | List (  (Leaf (Atom (R (Number (L a)))) ):: (Leaf (Atom (R (Number (L b)))) )::xs  ) -> 
+                if a <= b then (Exp(L (Atom (R (T))))) else (Exp(L (Atom (R (F)))))
+        | _ -> failwith "incorrect usage of leq"
+    in
+    
     let pi = Ref (Number (R Float.pi)) in
 
     (* We can see that (1 2 3) will fail the interpreter, while (list 1 2 3) will generate
@@ -233,6 +257,8 @@ let basic_environment (_: unit) : env scheme_obj =
     let listify = Proc (fun x -> Exp (R x)) in
     (   
         Hashtbl.add hs (Symbol "+") (Proc add);
+        Hashtbl.add hs (Symbol "-") (Proc minus);
+        Hashtbl.add hs (Symbol "<=") (Proc leq);
         Hashtbl.add hs (Symbol "*") (Proc mult);
         Hashtbl.add hs (Symbol "pi") pi;
         Hashtbl.add hs (Symbol "list") listify;
@@ -281,6 +307,7 @@ let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj =
                                             | Leaf (Atom (R (Number x))) -> setc (args |> List.hd) (Ref (Number x)) environ
                                             | _ -> failwith "incorrect usage of define"
                                     )
+                        | Begin -> (List.map ast_apply args) |> List.rev |> List.hd |> atom_ele_to_exp
                     )
                 | Leaf (Atom (L (Func (params, body, Env env) as p))) -> eval_user_proc p (List.map ast_apply args) environ
             )
@@ -322,12 +349,12 @@ and eval_user_proc (p: func scheme_obj) (args: atom scheme_obj ast list) (env: e
         | _ -> failwith "incorrect usage of eval_user_proc")
     in
     match p with
-        | (Func (params, body, Env env)) -> eval body (ref (Env (create_user_env(params, to_store_list args, env)))) 
+        | ( (Func (params, body, Env e)) as p) -> Printf.printf "eval \n"; eval body (ref (Env (create_user_env(params, to_store_list args, e))))
         | _ -> failwith "incorrect usage of eval_user_proc"
         
 let environ = ref (basic_environment ())
 
-let program = "(define cr (lambda r (* pi (* r r))))"
+let program = "(define fact (lambda (n) (if (<= n 1) 1 (* n (fact (- n 1))))))"
 
 let res = parse(program) 
 
@@ -380,5 +407,8 @@ let read_eval_print_loop (_ : unit) : unit =
         )
     done
 
+let e = ref (basic_environment ())
+let r = eval (parse(program)) e
 (* entry point to program *) 
 let () = read_eval_print_loop ()
+
