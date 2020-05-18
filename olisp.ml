@@ -119,6 +119,13 @@ let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env
 let define (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
     match params with
         | Leaf (Atom (L (Symbol s))) -> (set env (Symbol s) body; Epsilon)
+        | Node (Leaf (Atom (L (Symbol s))) :: _) -> (set env (Symbol s) body; Epsilon)
+        | _ -> failwith "only symbols can be bond in the environment"
+
+let setc (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
+    match params with
+        | Leaf (Atom (L (Symbol s))) -> find env (Symbol s); (set env (Symbol s) body; Epsilon)
+        | Node (Leaf (Atom (L (Symbol s))) :: _) -> find env (Symbol s); (set env (Symbol s) body; Epsilon)
         | _ -> failwith "only symbols can be bond in the environment"
 
 (* tokenize a Lisp expression (in string) to tokens *)
@@ -206,6 +213,18 @@ let basic_environment (_: unit) : env scheme_obj =
             | _ -> failwith "incorrect usage of add")
         | _ -> failwith "incorrect usage of add"
     in
+    let rec mult l = match l with
+        | List [] -> literal 1L
+        | List (  (Leaf (Atom (R (Number (L a)))) )::xs  ) -> (match mult(List xs) with
+                | Exp (L (Atom (R (Number (L sum))))) ->  literal (Int64.mul sum a)
+                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (Int64.to_float(a) *. sum)
+                | _ -> failwith "incorrect usage of mult")
+        | List (  (Leaf (Atom (R (Number (R a)))) )::xs  ) -> (match mult(List xs) with
+                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (sum *. a)
+                | Exp (L (Atom (R (Number (L sum))))) ->  float_literal ( Int64.to_float(sum) *. a)
+            | _ -> failwith "incorrect usage of mult")
+        | _ -> failwith "incorrect usage of mult"
+    in
     let pi = Ref (Number (R Float.pi)) in
 
     (* We can see that (1 2 3) will fail the interpreter, while (list 1 2 3) will generate
@@ -214,6 +233,7 @@ let basic_environment (_: unit) : env scheme_obj =
     let listify = Proc (fun x -> Exp (R x)) in
     (   
         Hashtbl.add hs (Symbol "+") (Proc add);
+        Hashtbl.add hs (Symbol "*") (Proc mult);
         Hashtbl.add hs (Symbol "pi") pi;
         Hashtbl.add hs (Symbol "list") listify;
         Env (Innermost hs)
@@ -249,6 +269,18 @@ let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj =
                         | If -> let acc = List.nth args in 
                                     eval (condition (eval (atom_ele_to_exp (acc 0)) env) (acc 1) (acc 2)) env
                         | Lambda -> lambda (args |> List.hd) (args |> List.tl) environ
+                        | Define -> (match ast_apply (args |> List.tl |> List.rev |> List.hd)  with
+                                            | Leaf (Atom (L (Symbol s))) -> define (args |> List.hd) (find environ (Symbol s)) environ
+                                            | Leaf (Atom (L (Func l))) -> define (args |> List.hd) (UProc (Func l)) environ
+                                            | Leaf (Atom (R (Number x))) -> define (args |> List.hd) (Ref (Number x)) environ
+                                            | _ -> failwith "incorrect usage of define"
+                                    )
+                        | Set -> (match ast_apply (args |> List.tl |> List.rev |> List.hd)  with
+                                            | Leaf (Atom (L (Symbol s))) -> setc (args |> List.hd) (find environ (Symbol s)) environ
+                                            | Leaf (Atom (L (Func l))) -> setc (args |> List.hd) (UProc (Func l)) environ
+                                            | Leaf (Atom (R (Number x))) -> setc (args |> List.hd) (Ref (Number x)) environ
+                                            | _ -> failwith "incorrect usage of define"
+                                    )
                     )
                 | Leaf (Atom (L (Func (params, body, Env env) as p))) -> eval_user_proc p (List.map ast_apply args) environ
             )
@@ -295,7 +327,7 @@ and eval_user_proc (p: func scheme_obj) (args: atom scheme_obj ast list) (env: e
         
 let environ = ref (basic_environment ())
 
-let program = "((lambda (f x) (f x)) (lambda (x) (+ x 2)) ((lambda (x) x) 1))"
+let program = "(define cr (lambda r (* pi (* r r))))"
 
 let res = parse(program) 
 
