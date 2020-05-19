@@ -47,12 +47,12 @@ type 'a scheme_obj =
                                                                   or a list of atomic expressions *)
     | Epsilon : exp scheme_obj (* Epsilon to represent the result of commands like "define" *)
     | Env : lookup -> env scheme_obj (* An environment is a scheme object *)
-and lookup = (* Scoping *)
+and lookup = (* Lexical Scoping *)
     | Innermost of (namespace scheme_obj, store) Hashtbl.t (* Inner-most scope *)
     | Outer of ((namespace scheme_obj, store) Hashtbl.t * lookup)
 and store =  (* Environment-defined procedures, variables, and user-defined procedures *)
     | Proc of (l scheme_obj -> exp scheme_obj) (* Pre-defined procedures (like +) in envs *)
-    | Ref of num scheme_obj (* Variable-value bindings *) 
+    | Ref of (num scheme_obj, l scheme_obj) e (* Variable-value bindings *) 
     | UProc of func scheme_obj (* User-defined procedures *)               
 
 (* finding and setting a binding in an environment: starting with the inner-most scope,
@@ -119,14 +119,15 @@ let lambda (params : atom scheme_obj ast) (body : atom scheme_obj ast list) (env
 
 let define (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
     match params with
-        | Leaf (Atom (L (Symbol s))) -> (set env (Symbol s) body; Epsilon)
-        | Node (Leaf (Atom (L (Symbol s))) :: _) -> (set env (Symbol s) body; Epsilon)
+        | Leaf (Atom (L (Symbol s))) -> begin try (set env (Symbol s) body; Epsilon) with Not_found -> failwith ("Unbound symbol: "^s) end
+        | Node (Leaf (Atom (L (Symbol s))) :: _) -> begin try (set env (Symbol s) body; Epsilon) with Not_found -> failwith ("Unbound symbol: "^s) end
         | _ -> failwith "only symbols can be bond in the environment"
 
 let setc (params : atom scheme_obj ast) (body : store) (env : env scheme_obj) : exp scheme_obj = 
+    let ignore _ = () in
     match params with
-        | Leaf (Atom (L (Symbol s))) -> find env (Symbol s); (set env (Symbol s) body; Epsilon)
-        | Node (Leaf (Atom (L (Symbol s))) :: _) -> find env (Symbol s); (set env (Symbol s) body; Epsilon)
+        | Leaf (Atom (L (Symbol s))) ->  (try ( (find env (Symbol s)) |> ignore; (set env (Symbol s) body; Epsilon))  with Not_found -> failwith ("Unbound symbol: "^s))
+        | Node (Leaf (Atom (L (Symbol s))) :: _) ->  (try ( (find env (Symbol s)) |> ignore; (set env (Symbol s) body; Epsilon))  with Not_found -> failwith ("Unbound symbol: "^s))
         | _ -> failwith "only symbols can be bond in the environment"
 
 (* tokenize a Lisp expression (in string) to tokens *)
@@ -158,6 +159,8 @@ let rec print_list (a: string list) b = if not(debug) then () else match a with
    | x::xs -> (Printf.printf "%s " (x) ; print_list xs b)
 
 (* imperative function to construct AST from tokens *)
+(* On hindsight, I should've done LL(K), but I'm too
+  unfamiliar with compilers *)
 let rec read_from_tokens (tokens: string list ref) : 'a ast = 
     let () = print_list (!tokens) "list" in
     match !tokens with
@@ -228,40 +231,64 @@ let basic_environment (_: unit) : env scheme_obj =
     in
     let rec minus l = match l with
         | List [] -> literal 0L
-        | List (  (Leaf (Atom (R (Number (L a)))) )::(Leaf (Atom (R (Number (L b)))) )::xs  ) -> 
+        | List (  (Leaf (Atom (R (Number (L a)))) )::(Leaf (Atom (R (Number (L b)))) )::_  ) -> 
             literal (Int64.sub a b)
-        (*| List (  (Leaf (Atom (R (Number (L a)))) )::xs  ) -> (match minus(List xs) with
-                | Exp (L (Atom (R (Number (L sum))))) ->  literal (Int64.sub sum a)
-                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (Int64.to_float(a) -. sum)
-                | _ -> failwith "incorrect usage of minus")
-        | List (  (Leaf (Atom (R (Number (R a)))) )::xs  ) -> (match minus(List xs) with
-                | Exp (L (Atom (R (Number (R sum))))) ->  float_literal (sum -. a)
-                | Exp (L (Atom (R (Number (L sum))))) ->  float_literal ( Int64.to_float(sum) -. a)
-            | _ -> failwith "incorrect usage of minus")
-        *)
+        | List (  (Leaf (Atom (R (Number (R a)))) )::(Leaf (Atom (R (Number (R b)))) )::_  ) -> 
+            float_literal (a -. b)
+        | List (  (Leaf (Atom (R (Number (L a)))) )::(Leaf (Atom (R (Number (R b)))) )::_  ) -> 
+            float_literal ( Int64.to_float(a) -. b)
+        | List (  (Leaf (Atom (R (Number (R a)))) )::(Leaf (Atom (R (Number (L b)))) )::_  ) -> 
+            float_literal ( a -. Int64.to_float(b) )
         | _ -> failwith "incorrect usage of minus"
     in
-    let leq l = match l with
+    let num2boolbiop fi ff st l = match l with
         | List [] -> failwith "Too few arguments: exptected 2, got 0"
         | List (_::[]) -> failwith "Too few arguments: exptected 2, got 1"
         | List (  (Leaf (Atom (R (Number (L a)))) ):: (Leaf (Atom (R (Number (L b)))) )::xs  ) -> 
-                if a <= b then (Exp(L (Atom (R (T))))) else (Exp(L (Atom (R (F)))))
-        | _ -> failwith "incorrect usage of leq"
+                if fi a b then (Exp(L (Atom (R (T))))) else (Exp(L (Atom (R (F)))))
+        | List (  (Leaf (Atom (R (Number (R a)))) ):: (Leaf (Atom (R (Number (L b)))) )::xs  ) -> 
+                if ff a (Int64.to_float b) then (Exp(L (Atom (R (T))))) else (Exp(L (Atom (R (F)))))
+        | List (  (Leaf (Atom (R (Number (L a)))) ):: (Leaf (Atom (R (Number (R b)))) )::xs  ) -> 
+                if ff (Int64.to_float a) b then (Exp(L (Atom (R (T))))) else (Exp(L (Atom (R (F)))))
+        | _ -> failwith ("incorrect usage of "^st)
     in
-    
-    let pi = Ref (Number (R Float.pi)) in
+    let leq a b = a <= b in
+    let geq a b = a >= b in
+    let ge a b = a > b in
+    let le a b = a < b in
+    let pi = Ref (L(Number (R Float.pi))) in
 
     (* We can see that (1 2 3) will fail the interpreter, while (list 1 2 3) will generate
        (1 2 3) because of the function below: they have the same internal representation
      *)
     let listify = Proc (fun x -> Exp (R x)) in
+    let car x = match x with
+        | (List ((Node ((Leaf x)::_))::_)) -> Exp(L(x))
+        | (List ((Node ((Node x)::_))::_)) -> Exp(R(List x))
+        | _ -> failwith "incorrect usage of car"
+    in
+    let cdr x = match x with
+        | (List ((Node (_::xs))::_)) -> Exp(R(List xs))
+        | _ -> failwith "incorrect usage of cdr"
+    in
+    let isnull x = match x with
+        | (List ((Node ([]))::_)) -> (Exp(L (Atom (R (T)))))
+        | (List ((Node (_))::_)) -> (Exp(L (Atom (R (F)))))
+        | _ -> (Exp(L (Atom (R (F)))))
+    in
     (   
         Hashtbl.add hs (Symbol "+") (Proc add);
         Hashtbl.add hs (Symbol "-") (Proc minus);
-        Hashtbl.add hs (Symbol "<=") (Proc leq);
         Hashtbl.add hs (Symbol "*") (Proc mult);
+        Hashtbl.add hs (Symbol "<=") (Proc (num2boolbiop leq leq "<="));
+        Hashtbl.add hs (Symbol ">=") (Proc (num2boolbiop geq geq ">="));
+        Hashtbl.add hs (Symbol ">") (Proc (num2boolbiop ge ge ">"));
+        Hashtbl.add hs (Symbol "<") (Proc (num2boolbiop le le "<"));
         Hashtbl.add hs (Symbol "pi") pi;
         Hashtbl.add hs (Symbol "list") listify;
+        Hashtbl.add hs (Symbol "car") (Proc car);
+        Hashtbl.add hs (Symbol "cdr") (Proc cdr);
+        Hashtbl.add hs (Symbol "null?") (Proc isnull);
         Env (Innermost hs)
     )
 
@@ -276,10 +303,15 @@ let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj =
     | (Exp(L (Atom (L (Symbol "#t"))))) -> (Exp(L (Atom (R (T)))))
     | (Exp(L (Atom (L (Symbol s))))) -> 
         (match (check_builtin (Symbol s)) with
-            | NotABuiltin ->   begin try (match find environ (Symbol s) with
-                                | Ref r -> Exp(L (Atom (R r)))
-                                | Proc f -> e
-                                | UProc (Func (params, body, Env env) as p) -> Exp(L (Atom (L p)))) with Not_found -> failwith ("Unbound symbol: "^s) end
+            | NotABuiltin ->   
+                begin try (match find environ (Symbol s) with
+                    | Ref (L r) -> Exp(L (Atom (R r)))
+                    | Ref (R l) -> Exp(R (l))
+                    | Proc f -> e
+                    | UProc (Func (params, body, Env env) as p) -> Exp(L (Atom (L p)))
+                    | UProc _ -> (failwith "ill-formed user-defined procedure")
+                          ) with Not_found -> failwith ("Unbound symbol: "^s) 
+                end
             | _ -> e
         )
     | (Exp(R (List (op::args)))) ->
@@ -288,9 +320,13 @@ let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj =
                 | Leaf (Atom (R _)) -> failwith "Error: a literal is not a function"
                 | Leaf (Atom (L (Symbol s))) -> 
                     (match (check_builtin (Symbol s)) with
-                        | NotABuiltin ->  begin try (match find environ (Symbol s) with
-                                   | Ref r -> failwith "Error: a literal is not a function"
-                                   | Proc f -> let args_eval = List.map ast_apply args in f (List (args_eval)) ) with Not_found -> failwith ("Unbound symbol: "^s) end
+                        | NotABuiltin ->  
+                            begin try (match find environ (Symbol s) with
+                                | Ref (_) -> failwith "Error: a literal is not a function"
+                                | Proc f -> let args_eval = List.map ast_apply args in f (List (args_eval))
+                                | UProc p -> eval_user_proc p (List.map ast_apply args) environ 
+                                      ) with Not_found -> failwith ("Unbound symbol: "^s) 
+                            end
                         | Quote -> quote args
                         | If -> let acc = List.nth args in 
                                     eval (condition (eval (atom_ele_to_exp (acc 0)) env) (acc 1) (acc 2)) env
@@ -298,18 +334,21 @@ let rec eval (e: exp scheme_obj) (env: env scheme_obj ref) : exp scheme_obj =
                         | Define -> (match ast_apply (args |> List.tl |> List.rev |> List.hd)  with
                                             | Leaf (Atom (L (Symbol s))) -> define (args |> List.hd) (find environ (Symbol s)) environ
                                             | Leaf (Atom (L (Func l))) -> define (args |> List.hd) (UProc (Func l)) environ
-                                            | Leaf (Atom (R (Number x))) -> define (args |> List.hd) (Ref (Number x)) environ
+                                            | Leaf (Atom (R (Number x))) -> define (args |> List.hd) (Ref (L(Number x))) environ
+                                            | Node (l) -> define (args |> List.hd) (Ref (R(List l))) environ
                                             | _ -> failwith "incorrect usage of define"
                                     )
                         | Set -> (match ast_apply (args |> List.tl |> List.rev |> List.hd)  with
                                             | Leaf (Atom (L (Symbol s))) -> setc (args |> List.hd) (find environ (Symbol s)) environ
                                             | Leaf (Atom (L (Func l))) -> setc (args |> List.hd) (UProc (Func l)) environ
-                                            | Leaf (Atom (R (Number x))) -> setc (args |> List.hd) (Ref (Number x)) environ
+                                            | Leaf (Atom (R (Number x))) -> setc (args |> List.hd) (Ref (L(Number x))) environ
+                                            | Node (l) -> define (args |> List.hd) (Ref (R(List l))) environ
                                             | _ -> failwith "incorrect usage of define"
                                     )
                         | Begin -> (List.map ast_apply args) |> List.rev |> List.hd |> atom_ele_to_exp
                     )
                 | Leaf (Atom (L (Func (params, body, Env env) as p))) -> eval_user_proc p (List.map ast_apply args) environ
+                | _ -> failwith "ill-formed operator"
             )
     | _ -> failwith "NotImplemented in eval")
 (* helper function that prunes a children in AST into an "irreducible" expression,
@@ -340,23 +379,21 @@ and create_user_env ( (params, args, env) : data scheme_obj list * store list * 
 and eval_user_proc (p: func scheme_obj) (args: atom scheme_obj ast list) (env: env scheme_obj): exp scheme_obj =
     let rec to_store_list args = (match args with 
         |  [] -> []
-        |  ( (Leaf (Atom (R x)))::xs) -> (Ref x) :: (to_store_list (xs))
+        |  ( (Leaf (Atom (R x)))::xs) -> (Ref (L x)) :: (to_store_list (xs))
+        |  ( (Node l)::xs ) -> (Ref (R (List l))) :: (to_store_list (xs))
         |  ( (Leaf (Atom (L (Func f))))::xs) -> (UProc (Func f)) :: (to_store_list (xs))
         (* Move references in the previous environment into the current one if lambda uses a symbol in previous environment 
           this is because we don't allow references that point to another reference in the GADT definition
          *)
         |  ( (Leaf (Atom (L (Symbol s))))::xs) ->  begin try (find env (Symbol s)) :: (to_store_list (xs)) with Not_found -> failwith ("Unbound symbol: "^s) end
-        | _ -> failwith "incorrect usage of eval_user_proc")
+        (* | _ -> failwith "incorrect usage of eval_user_proc" *)
+    )
     in
     match p with
-        | ( (Func (params, body, Env e)) as p) -> Printf.printf "eval \n"; eval body (ref (Env (create_user_env(params, to_store_list args, e))))
+        | ( (Func (params, body, Env e)) ) -> eval body (ref (Env (create_user_env(params, to_store_list args, e))))
         | _ -> failwith "incorrect usage of eval_user_proc"
         
 let environ = ref (basic_environment ())
-
-let program = "(define fact (lambda (n) (if (<= n 1) 1 (* n (fact (- n 1))))))"
-
-let res = parse(program) 
 
 (* turn a num scheme_obj into a string *)
 let num_str (n : num scheme_obj) : string = match n with
@@ -407,8 +444,26 @@ let read_eval_print_loop (_ : unit) : unit =
         )
     done
 
-let e = ref (basic_environment ())
-let r = eval (parse(program)) e
+(* Sample Program: the Y Combinator *)
+let y = "(define Y (lambda (w) ((lambda (f) (f f)) (lambda (f) (w (lambda (x) ((f f) x)))))))"
+let fib' = "(define Fib (lambda (func-arg) (lambda (n) (if (< n 2) n (+ (func-arg (- n 1)) (func-arg (- n 2)))))))"
+let fib = "(define fib (Y Fib))"
+let program = "(fib 20)"
+
+let run_sample_y_combinator (_ : unit) : env scheme_obj ref =
+    let env = ref (basic_environment ()) in
+(
+    Printf.printf "%s " y;
+    Printf.printf "=> %s\n" (to_string (eval (parse y) env));
+    Printf.printf "%s " fib';
+    Printf.printf "=> %s\n" (to_string (eval (parse fib') env));
+    Printf.printf "%s " fib;
+    Printf.printf "=> %s\n" (to_string (eval (parse fib) env));
+    Printf.printf "%s " program;
+    Printf.printf "=> %s\n" (to_string (eval (parse program) env));
+    env;
+)
+
 (* entry point to program *) 
 let () = read_eval_print_loop ()
 
