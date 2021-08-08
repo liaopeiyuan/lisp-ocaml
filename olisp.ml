@@ -181,7 +181,7 @@ let rec read_from_tokens (tokens: string list ref) : 'a ast =
         | ")"::_ -> failwith "unexpected )" 
         | x::xs->  let () = tokens := xs in Leaf (atom(x))
 
-(* final parser: frpm a string to an expression *)
+(* final parser: from a string to an expression *)
 let parse (program : string) : exp scheme_obj =
     let input = program |> tokenize |> ref in
     let result = input |> read_from_tokens in
