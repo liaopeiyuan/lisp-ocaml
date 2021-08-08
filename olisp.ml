@@ -366,7 +366,8 @@ and create_user_env ( (params, args, env) : data scheme_obj list * store list * 
     let rec zip params args hs = match ( params,  args) with 
         | ([], []) -> hs
         | (x::xs, y::ys) -> (Hashtbl.add hs x y; zip xs ys hs)
-        | _ -> failwith "inproper user defined procedure"
+        | (_, []) -> failwith "inproper user defined procedure: more args"
+        | ([], _) -> failwith "inproper user defined procedure: more params"
     in
     let hs = Hashtbl.create seed in
     let dict = zip params args hs in
@@ -446,9 +447,16 @@ let read_eval_print_loop (_ : unit) : unit =
 
 (* Sample Program: the Y Combinator *)
 let y = "(define Y (lambda (w) ((lambda (f) (f f)) (lambda (f) (w (lambda (x) ((f f) x)))))))"
+let y_lazy = "(define Yl (lambda (f) ((lambda (x) (f (x x))) (lambda (x) (f (x x))))))"
 let fib' = "(define Fib (lambda (func-arg) (lambda (n) (if (< n 2) n (+ (func-arg (- n 1)) (func-arg (- n 2)))))))"
 let fib = "(define fib (Y Fib))"
+let fib_lazy = "(define fibl (Yl Fib))"
 let program = "(fib 20)"
+let env = ref (basic_environment())
+let eval_str x = (eval (parse x) env)
+let _ = eval_str y_lazy
+let _ = eval_str y 
+let _ = eval_str fib'
 
 let run_sample_y_combinator (_ : unit) : env scheme_obj ref =
     let env = ref (basic_environment ()) in
